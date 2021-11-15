@@ -131,6 +131,14 @@ typedef enum WalLevel
 	WAL_LEVEL_LOGICAL
 } WalLevel;
 
+/* Recovery states */
+typedef enum RecoveryState
+{
+	RECOVERY_STATE_CRASH = 0,	/* crash recovery */
+	RECOVERY_STATE_ARCHIVE,		/* archive recovery */
+	RECOVERY_STATE_DONE			/* currently in production */
+} RecoveryState;
+
 extern PGDLLIMPORT int wal_level;
 
 /* Is WAL archiving enabled (always or only while server is running normally)? */
@@ -187,9 +195,11 @@ extern bool XLOG_DEBUG;
 /* These indicate the cause of a checkpoint request */
 #define CHECKPOINT_CAUSE_XLOG	0x0040	/* XLOG consumption */
 #define CHECKPOINT_CAUSE_TIME	0x0080	/* Elapsed time */
+/* We set this to ensure that ckpt_flags is not 0 if a request has been made */
+#define CHECKPOINT_REQUESTED	0x0100	/* Checkpoint request has been made */
 
 /* POLAR: lazy checkpoint */
-#define CHECKPOINT_LAZY         0x0100
+#define CHECKPOINT_LAZY         0x1000
 
 /*
  * Flag bits for the record being inserted, set using XLogSetRecordFlags().
@@ -246,6 +256,7 @@ extern const char *xlog_identify(uint8 info);
 extern void issue_xlog_fsync(int fd, XLogSegNo segno);
 
 extern bool RecoveryInProgress(void);
+extern RecoveryState GetRecoveryState(void);
 extern bool HotStandbyActive(void);
 extern bool HotStandbyActiveInReplay(void);
 extern bool XLogInsertAllowed(void);
@@ -298,6 +309,8 @@ extern void assign_checkpoint_completion_target(double newval, void *extra);
 	(polar_enable_shared_storage_mode && polar_node_type() == POLAR_STANDBY)
 /* POLAR: judge standby node type no matter whether polar_enable_shared_storage_mode is true */
 #define polar_in_standby_mode() (polar_node_type() == POLAR_STANDBY)
+#define polar_is_standby_in_recovery() \
+	(RecoveryInProgress() && polar_is_standby())
 #define polar_is_master_in_recovery() \
 	(RecoveryInProgress() && polar_is_master())
 #define polar_max_valid_lsn() \
@@ -360,7 +373,8 @@ extern XLogRecPtr do_pg_start_backup(const char *backupidstr, bool fast,
 				   bool needtblspcmapfile);
 extern XLogRecPtr do_pg_stop_backup(char *labelfile, bool waitforarchive,
 				  TimeLineID *stoptli_p);
-extern void do_pg_abort_backup(void);
+extern void do_pg_abort_backup(int code, Datum arg);
+extern void register_persistent_abort_backup_handler(void);
 extern SessionBackupState get_backup_status(void);
 
 /* File path names (all relative to $PGDATA) */

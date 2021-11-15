@@ -400,9 +400,9 @@ function polar_start() {
 
   echo "Following command can be used to connect to PG:"
   echo ""
-  echo $polar_basedir/bin/psql -h 127.0.0.1 -d -p $polar_port postgres
-  echo $polar_basedir/bin/psql -h 127.0.0.1 -d -p $polar_rep_port postgres
-  echo $polar_basedir/bin/psql -h 127.0.0.1 -d -p $polar_standby_port postgres
+  echo $polar_basedir/bin/psql -h 127.0.0.1 -d postgres -U $pg_db_user -p $polar_port
+  echo $polar_basedir/bin/psql -h 127.0.0.1 -d postgres -U $pg_db_user -p $polar_rep_port
+  echo $polar_basedir/bin/psql -h 127.0.0.1 -d postgres -U $pg_db_user -p $polar_standby_port
   echo ""
 }
 
