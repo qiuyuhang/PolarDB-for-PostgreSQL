@@ -1005,11 +1005,12 @@ typedef struct PgBackendStatus
 	 * the copy is valid; otherwise start over.  This makes updates cheap
 	 * while reads are potentially expensive, but that's the tradeoff we want.
 	 *
-	 * The above protocol needs the memory barriers to ensure that the
-	 * apparent order of execution is as it desires. Otherwise, for example,
-	 * the CPU might rearrange the code so that st_changecount is incremented
-	 * twice before the modification on a machine with weak memory ordering.
-	 * This surprising result can lead to bugs.
+	 * The above protocol needs memory barriers to ensure that the apparent
+	 * order of execution is as it desires.  Otherwise, for example, the CPU
+	 * might rearrange the code so that st_changecount is incremented twice
+	 * before the modification on a machine with weak memory ordering.  Hence,
+	 * use the macros defined below for manipulating st_changecount, rather
+	 * than touching it directly.
 	 */
 	int			st_changecount;
 
@@ -1115,42 +1116,32 @@ typedef struct PgBackendStatus
 		END_CRIT_SECTION(); \
 	} while (0)
 
-/*
- * Macros to load and store st_changecount with the memory barriers.
- *
- * pgstat_increment_changecount_before() and
- * pgstat_increment_changecount_after() need to be called before and after
- * PgBackendStatus entries are modified, respectively. This makes sure that
- * st_changecount is incremented around the modification.
- *
- * Also pgstat_save_changecount_before() and pgstat_save_changecount_after()
- * need to be called before and after PgBackendStatus entries are copied into
- * private memory, respectively.
- */
-#define pgstat_increment_changecount_before(beentry)	\
-	do {	\
-		beentry->st_changecount++;	\
-		pg_write_barrier(); \
+#define pgstat_begin_read_activity(beentry, before_changecount) \
+	do { \
+		(before_changecount) = (beentry)->st_changecount; \
+		pg_read_barrier(); \
 	} while (0)
 
+#define pgstat_end_read_activity(beentry, after_changecount) \
+	do { \
+		pg_read_barrier(); \
+		(after_changecount) = (beentry)->st_changecount; \
+	} while (0)
+
+#define pgstat_read_activity_complete(before_changecount, after_changecount) \
+	((before_changecount) == (after_changecount) && \
+	 ((before_changecount) & 1) == 0)
+
+/* deprecated names for above macros; these are gone in v12 */
+#define pgstat_increment_changecount_before(beentry) \
+	PGSTAT_BEGIN_WRITE_ACTIVITY(beentry)
 #define pgstat_increment_changecount_after(beentry) \
-	do {	\
-		pg_write_barrier(); \
-		beentry->st_changecount++;	\
-		Assert((beentry->st_changecount & 1) == 0); \
-	} while (0)
+	PGSTAT_END_WRITE_ACTIVITY(beentry)
+#define pgstat_save_changecount_before(beentry, save_changecount) \
+	pgstat_begin_read_activity(beentry, save_changecount)
+#define pgstat_save_changecount_after(beentry, save_changecount) \
+	pgstat_end_read_activity(beentry, save_changecount)
 
-#define pgstat_save_changecount_before(beentry, save_changecount)	\
-	do {	\
-		save_changecount = beentry->st_changecount; \
-		pg_read_barrier();	\
-	} while (0)
-
-#define pgstat_save_changecount_after(beentry, save_changecount)	\
-	do {	\
-		pg_read_barrier();	\
-		save_changecount = beentry->st_changecount; \
-	} while (0)
 
 /* ----------
  * LocalPgBackendStatus
@@ -1201,9 +1192,9 @@ typedef struct PgStat_FunctionCallUsage
  * GUC parameters
  * ----------
  */
-extern bool pgstat_track_activities;
-extern bool pgstat_track_counts;
-extern int	pgstat_track_functions;
+extern PGDLLIMPORT bool pgstat_track_activities;
+extern PGDLLIMPORT bool pgstat_track_counts;
+extern PGDLLIMPORT int pgstat_track_functions;
 extern PGDLLIMPORT int pgstat_track_activity_query_size;
 extern char *pgstat_stat_directory;
 extern char *pgstat_stat_tmpname;
@@ -1448,7 +1439,7 @@ extern void pgstat_init_function_usage(FunctionCallInfoData *fcinfo,
 extern void pgstat_end_function_usage(PgStat_FunctionCallUsage *fcu,
 						  bool finalize);
 
-extern void AtEOXact_PgStat(bool isCommit);
+extern void AtEOXact_PgStat(bool isCommit, bool parallel);
 extern void AtEOSubXact_PgStat(bool isCommit, int nestDepth);
 
 extern void AtPrepare_PgStat(void);
